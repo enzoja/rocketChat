@@ -47,14 +47,15 @@ export const useNotification = () => {
 			}
 
 			if (n.addEventListener) {
-				n.addEventListener('reply', ({ response }) => {
-					console.log(response);
-					return void sdk.call('sendMessage', {
-						_id: Random.id(),
-						rid,
-						msg: response,
-					});
-				});
+				n.addEventListener(
+					'reply',
+					({ response }) =>
+						void sdk.call('sendMessage', {
+							_id: Random.id(),
+							rid,
+							msg: response,
+						}),
+				);
 			}
 
 			n.onclick = () => {
