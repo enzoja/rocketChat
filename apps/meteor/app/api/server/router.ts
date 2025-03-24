@@ -47,7 +47,7 @@ export class Router<
 
 	constructor(readonly base: TBasePath) {}
 
-	private typedRoutes: Record<string, Record<string, Route>> = {};
+	public typedRoutes: Record<string, Record<string, Route>> = {};
 
 	private registerTypedRoutes<
 		TSubPathPattern extends string,
