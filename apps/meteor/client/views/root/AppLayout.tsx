@@ -9,6 +9,7 @@ import { useOTRMessaging } from './hooks/useOTRMessaging';
 import { useSettingsOnLoadSiteUrl } from './hooks/useSettingsOnLoadSiteUrl';
 import { useStoreCookiesOnLogin } from './hooks/useStoreCookiesOnLogin';
 import { useUpdateVideoConfUser } from './hooks/useUpdateVideoConfUser';
+import { useWordPressOAuth } from './hooks/useWordPressOAuth';
 import { useAnalytics } from '../../../app/analytics/client/loadScript';
 import { useCorsSSLConfig } from '../../../app/cors/client/useCorsSSLConfig';
 import { useDolphin } from '../../../app/dolphin/client/hooks/useDolphin';
@@ -53,6 +54,7 @@ const AppLayout = () => {
 	useDrupal();
 	useDolphin();
 	useTokenPassAuth();
+	useWordPressOAuth();
 	useCustomOAuth();
 	useCorsSSLConfig();
 	useOTRMessaging();
