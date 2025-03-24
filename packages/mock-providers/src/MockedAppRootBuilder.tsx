@@ -13,7 +13,7 @@ import { Emitter } from '@rocket.chat/emitter';
 import languages from '@rocket.chat/i18n/dist/languages';
 import { createFilterFromQuery } from '@rocket.chat/mongo-adapter';
 import type { Method, OperationParams, OperationResult, PathPattern, UrlParams } from '@rocket.chat/rest-typings';
-import type { Device, ModalContextValue, SubscriptionWithRoom, TranslationKey } from '@rocket.chat/ui-contexts';
+import type { Device, ModalContextValue, SettingsContextQuery, SubscriptionWithRoom, TranslationKey } from '@rocket.chat/ui-contexts';
 import {
 	AuthorizationContext,
 	ConnectionStatusContext,
@@ -40,13 +40,6 @@ import { MockedDeviceContext } from './MockedDeviceContext';
 
 type Mutable<T> = {
 	-readonly [P in keyof T]: T[P];
-};
-
-export type SettingsContextQuery = {
-	readonly _id?: ISetting['_id'][] | RegExp;
-	readonly group?: ISetting['_id'];
-	readonly section?: string;
-	readonly tab?: ISetting['_id'];
 };
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -106,6 +99,7 @@ export class MockedAppRootBuilder {
 	private settings: Mutable<ContextType<typeof SettingsContext>> = {
 		hasPrivateAccess: true,
 		querySetting: (_id: string) => [() => () => undefined, () => undefined],
+		countTotalSettings: () => 0,
 		querySettings: (_query: SettingsContextQuery) => [() => () => undefined, () => empty as unknown as ISetting[]],
 		dispatch: async () => undefined,
 	};
@@ -429,6 +423,24 @@ export class MockedAppRootBuilder {
 				},
 			];
 		};
+
+		return this;
+	}
+
+	withSettings(settings: { _id: string; value: SettingValue }[]): this {
+		const innerFn = this.settings.querySettings;
+
+		const outerFn = (
+			query: SettingsContextQuery,
+		): [subscribe: (onStoreChange: () => void) => () => void, getSnapshot: () => ISetting[]] => {
+			if (settings.length) {
+				return [() => () => undefined, () => settings as unknown as ISetting[]];
+			}
+
+			return innerFn(query);
+		};
+
+		this.settings.querySettings = outerFn;
 
 		return this;
 	}

@@ -60,12 +60,16 @@ const SettingsProvider = ({ children }: SettingsProviderProps) => {
 								sorter: 1,
 								i18nLabel: 1,
 							},
+							...('skip' in query && typeof query.skip === 'number' && { skip: query.skip }),
+							...('limit' in query && typeof query.limit === 'number' && { limit: query.limit }),
 						},
 					)
 					.fetch(),
 			),
 		[cachedCollection],
 	);
+
+	const countTotalSettings = useMemo(() => () => cachedCollection.collection.find().count(), [cachedCollection]);
 
 	const queryClient = useQueryClient();
 
@@ -89,9 +93,10 @@ const SettingsProvider = ({ children }: SettingsProviderProps) => {
 			hasPrivateAccess: canManageSettings,
 			querySetting,
 			querySettings,
+			countTotalSettings,
 			dispatch,
 		}),
-		[canManageSettings, querySetting, querySettings, dispatch],
+		[canManageSettings, querySetting, querySettings, countTotalSettings, dispatch],
 	);
 
 	return <SettingsContext.Provider children={children} value={contextValue} />;

@@ -59,6 +59,7 @@ export default {
 						}),
 					],
 					querySettings: () => [() => () => undefined, () => []],
+					countTotalSettings: () => 0,
 					dispatch: async () => undefined,
 				}}
 			>
