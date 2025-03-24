@@ -1,8 +1,13 @@
+/* eslint-disable @typescript-eslint/naming-convention */
 import type { Method } from '@rocket.chat/rest-typings';
 import type { AnySchema } from 'ajv';
 import express from 'express';
+import type { HonoRequest, MiddlewareHandler } from 'hono';
+import { Hono } from 'hono';
+import qs from 'qs'; // Using qs specifically to keep express compatibility
 
 import type { TypedAction, TypedOptions } from './definition';
+import { honoAdapter } from './middlewares/honoAdapter';
 
 export type Route = {
 	responses: Record<
@@ -36,6 +41,18 @@ export type Route = {
 	}[];
 	tags?: string[];
 };
+declare module 'hono' {
+	interface ContextVariableMap {
+		'route': string;
+		'bodyParams-override'?: Record<string, any>;
+	}
+}
+
+declare global {
+	interface Request {
+		route: string;
+	}
+}
 
 export class Router<
 	TBasePath extends string,
@@ -43,7 +60,7 @@ export class Router<
 		[x: string]: unknown;
 	} = NonNullable<unknown>,
 > {
-	private middleware: (router: express.Router) => void = () => void 0;
+	private middleware: (router: Hono) => void = () => void 0;
 
 	constructor(readonly base: TBasePath) {}
 
@@ -103,6 +120,38 @@ export class Router<
 		};
 	}
 
+	private async parseBodyParams(request: HonoRequest, overrideBodyParams: Record<string, any> = {}) {
+		try {
+			let parsedBody = {};
+			const contentType = request.header('content-type');
+
+			if (contentType?.includes('application/json')) {
+				parsedBody = await request.raw.clone().json();
+			} else if (contentType?.includes('multipart/form-data')) {
+				parsedBody = await request.raw.clone().formData();
+			} else {
+				parsedBody = await request.raw.clone().text();
+			}
+			// This is necessary to keep the compatibility with the previous version, otherwise the bodyParams will be an empty string when no content-type is sent
+			if (parsedBody === '') {
+				return { ...overrideBodyParams };
+			}
+
+			if (Array.isArray(parsedBody)) {
+				return parsedBody;
+			}
+
+			return { ...parsedBody, ...overrideBodyParams };
+			// eslint-disable-next-line no-empty
+		} catch {}
+
+		return { ...overrideBodyParams };
+	}
+
+	private parseQueryParams(request: HonoRequest) {
+		return request.raw.url.includes('?') ? qs.parse(request.raw.url.split('?')?.[1] || '') : {};
+	}
+
 	private method<TSubPathPattern extends string, TOptions extends TypedOptions, TPathPattern extends `${TBasePath}/${TSubPathPattern}`>(
 		method: Method,
 		subpath: TSubPathPattern,
@@ -117,28 +166,38 @@ export class Router<
 		  } & Omit<TOptions, 'response'>)
 	> {
 		const prev = this.middleware;
-		this.middleware = (router: express.Router) => {
+		this.middleware = (router: Hono) => {
 			prev(router);
-			router[method.toLowerCase() as Lowercase<Method>](`/${subpath}`.replace('//', '/'), async (req, res) => {
+			router[method.toLowerCase() as Lowercase<Method>](`/${subpath}`.replace('//', '/'), async (c) => {
+				const { req, res } = c;
+				req.raw.route = `${c.var.route ?? ''}${subpath}`;
 				if (options.query) {
 					const validatorFn = options.query;
-					if (typeof options.query === 'function' && !validatorFn(req.query)) {
-						return res.status(400).json({
-							success: false,
-							errorType: 'error-invalid-params',
-							error: validatorFn.errors?.map((error: any) => error.message).join('\n '),
-						});
+					if (typeof options.query === 'function' && !validatorFn(req.query())) {
+						return c.json(
+							{
+								success: false,
+								errorType: 'error-invalid-params',
+								error: validatorFn.errors?.map((error: any) => error.message).join('\n '),
+							},
+							400,
+						);
 					}
 				}
 
+				const bodyParams = await this.parseBodyParams(req, c.var['bodyParams-override']);
+
 				if (options.body) {
 					const validatorFn = options.body;
-					if (typeof options.body === 'function' && !validatorFn((req as any).bodyParams || req.body)) {
-						return res.status(400).json({
-							success: false,
-							errorType: 'error-invalid-params',
-							error: validatorFn.errors?.map((error: any) => error.message).join('\n '),
-						});
+					if (typeof options.body === 'function' && !validatorFn((req as any).bodyParams || bodyParams)) {
+						return c.json(
+							{
+								success: false,
+								errorType: 'error-invalid-params',
+								error: validatorFn.errors?.map((error: any) => error.message).join('\n '),
+							},
+							400,
+						);
 					}
 				}
 
@@ -148,13 +207,13 @@ export class Router<
 					headers = {},
 				} = await action.apply(
 					{
-						urlParams: req.params,
-						queryParams: req.query,
-						bodyParams: (req as any).bodyParams || req.body,
-						request: req,
+						urlParams: req.param(),
+						queryParams: this.parseQueryParams(req),
+						bodyParams,
+						request: req.raw.clone(),
 						response: res,
 					} as any,
-					[req],
+					[req.raw.clone()],
 				);
 				if (process.env.NODE_ENV === 'test' || process.env.TEST_MODE) {
 					const responseValidatorFn = options?.response?.[statusCode];
@@ -170,7 +229,7 @@ export class Router<
 
 				const responseHeaders = Object.fromEntries(
 					Object.entries({
-						...res.header,
+						...res.headers,
 						'Content-Type': 'application/json',
 						'Cache-Control': 'no-store',
 						'Pragma': 'no-cache',
@@ -178,15 +237,13 @@ export class Router<
 					}).map(([key, value]) => [key.toLowerCase(), value]),
 				);
 
-				res.writeHead(statusCode, responseHeaders);
+				const contentType = (responseHeaders['content-type'] || 'application/json') as string;
 
-				if (responseHeaders['content-type']?.match(/json|javascript/) !== null) {
-					body !== undefined && res.write(JSON.stringify(body));
-				} else {
-					body !== undefined && res.write(body);
-				}
-
-				res.end();
+				return c.body(
+					(contentType?.match(/json|javascript/) ? JSON.stringify(body) : body) as any,
+					statusCode,
+					responseHeaders as Record<string, string>,
+				);
 			});
 		};
 		this.registerTypedRoutes(method, subpath, options);
@@ -253,13 +310,13 @@ export class Router<
 		return this.method('DELETE', subpath, options, action);
 	}
 
-	use<FN extends (req: express.Request, res: express.Response, next: express.NextFunction) => void>(fn: FN): Router<TBasePath, TOperations>;
+	use<FN extends MiddlewareHandler>(fn: FN): Router<TBasePath, TOperations>;
 
 	use<IRouter extends Router<any, any>>(
 		innerRouter: IRouter,
 	): IRouter extends Router<any, infer IOperations> ? Router<TBasePath, ConcatPathOptions<TBasePath, IOperations, TOperations>> : never;
 
-	use(innerRouter: any): any {
+	use(innerRouter: unknown): any {
 		if (innerRouter instanceof Router) {
 			this.typedRoutes = {
 				...this.typedRoutes,
@@ -267,28 +324,51 @@ export class Router<
 			};
 
 			const prev = this.middleware;
-			this.middleware = (router: express.Router) => {
+			this.middleware = (router: Hono) => {
 				prev(router);
-				router.use(innerRouter.router);
+
+				router
+					.use(`${innerRouter.base}/*`, (c, next) => {
+						c.set('route', `${c.var.route || ''}${innerRouter.base}`);
+						return next();
+					})
+					.route(innerRouter.base, innerRouter.honoRouter);
 			};
 		}
 		if (typeof innerRouter === 'function') {
 			const prev = this.middleware;
-			this.middleware = (router: express.Router) => {
+			this.middleware = (router: Hono) => {
 				prev(router);
-				router.use(innerRouter);
+				router.use(innerRouter as any);
 			};
 		}
 		return this as any;
 	}
 
+	get honoRouter(): Hono {
+		const router = new Hono();
+		this.middleware(router);
+		return router;
+	}
+
 	get router(): express.Router {
 		// eslint-disable-next-line new-cap
 		const router = express.Router();
-		// eslint-disable-next-line new-cap
-		const innerRouter = express.Router();
-		this.middleware(innerRouter);
-		router.use(this.base, innerRouter);
+		const hono = new Hono();
+		router.use(
+			this.base,
+			honoAdapter(
+				hono
+					.use(`${this.base}/*`, (c, next) => {
+						c.set('route', `${c.var.route || ''}${this.base}`);
+						return next();
+					})
+					.route(this.base, this.honoRouter)
+					.options('*', (c) => {
+						return c.body('OK');
+					}),
+			),
+		);
 		return router;
 	}
 }

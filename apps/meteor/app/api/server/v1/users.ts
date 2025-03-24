@@ -80,7 +80,7 @@ API.v1.addRoute(
 			const user = await getUserFromParams(this.queryParams);
 
 			const url = getURL(`/avatar/${user.username}`, { cdn: false, full: true });
-			this.response.setHeader('Location', url);
+			this.response.headers.set('Location', url);
 
 			return {
 				statusCode: 307,
@@ -885,7 +885,7 @@ API.v1.addRoute(
 			await Users.enableEmail2FAByUserId(this.userId);
 
 			// When 2FA is enable we logout all other clients
-			const xAuthToken = this.request.headers['x-auth-token'] as string;
+			const xAuthToken = this.request.headers.get('x-auth-token') as string;
 			if (!xAuthToken) {
 				return API.v1.success();
 			}
@@ -1063,7 +1063,7 @@ API.v1.addRoute(
 	{ authRequired: true },
 	{
 		async post() {
-			const xAuthToken = this.request.headers['x-auth-token'] as string;
+			const xAuthToken = this.request.headers.get('x-auth-token') as string;
 
 			if (!xAuthToken) {
 				throw new Meteor.Error('error-parameter-required', 'x-auth-token is required');
